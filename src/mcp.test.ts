@@ -29,6 +29,7 @@ test("starts over stdio and exposes the Blockbench tools", async () => {
     "blockbench_capture_preview",
     "blockbench_capture_texture",
     "blockbench_capture_turntable",
+    "blockbench_create_combat_combo",
     "blockbench_create_pet",
     "blockbench_create_rig",
     "blockbench_export_model",

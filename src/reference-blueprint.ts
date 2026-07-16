@@ -111,6 +111,32 @@ const organicFinPrimitive = z.object({
   twist: z.tuple([z.number().finite(), z.number().finite()]).default([0, 0]),
 });
 
+const layeredArmorPrimitive = z.object({
+  kind: z.literal("layered_armor"), ...common,
+  material: refId,
+  trim_material: refId.optional(),
+  center: vec3,
+  size: vec3,
+  layers: z.number().int().min(2).max(24).default(4),
+  layer_offset: vec3.default([0, -0.8, 0.35]),
+  scale_step: vec3.default([-0.07, -0.04, -0.06]).describe("Fractional size change per layer"),
+  rotation: vec3.default([0, 0, 0]),
+  rotation_step: vec3.default([0, 0, 4]),
+  trim_thickness: z.number().min(0).max(8).default(0.18),
+});
+
+const cageFramePrimitive = z.object({
+  kind: z.literal("cage_frame"), ...common,
+  material: refId,
+  from: vec3,
+  to: vec3,
+  rail_thickness: z.number().positive().max(32).default(0.35),
+  vertical_bars: z.number().int().min(0).max(32).default(2),
+  horizontal_bars: z.number().int().min(0).max(32).default(1),
+  depth_braces: z.number().int().min(0).max(32).default(0),
+  rotation: vec3.default([0, 0, 0]),
+});
+
 export const referencePrimitiveSchema = z.discriminatedUnion("kind", [
   boxPrimitive,
   taperedStackPrimitive,
@@ -121,6 +147,8 @@ export const referencePrimitiveSchema = z.discriminatedUnion("kind", [
   ribcagePrimitive,
   armorPlatePrimitive,
   organicFinPrimitive,
+  layeredArmorPrimitive,
+  cageFramePrimitive,
 ]);
 
 export const referenceBlueprintSchema = z.object({
@@ -144,6 +172,7 @@ export const referenceBlueprintSchema = z.object({
     geometry_style: z.enum(["voxel", "fancy_voxel", "organic_layered"]).default("fancy_voxel"),
     texture_style: z.enum(["flat", "hand_painted_pixel", "material_aware"]).default("material_aware"),
     silhouette_priority: z.number().min(0).max(1).default(0.85),
+    uv_layout: z.enum(["shared", "packed_faces"]).default("packed_faces"),
     paint_passes: z.array(z.enum(["base", "shadow", "highlight", "accent", "wear", "emissive"])).min(1).max(6)
       .default(["base", "shadow", "highlight", "accent"]),
   }).default({
@@ -151,6 +180,7 @@ export const referenceBlueprintSchema = z.object({
     texture_style: "material_aware",
     silhouette_priority: 0.85,
     paint_passes: ["base", "shadow", "highlight", "accent"],
+    uv_layout: "packed_faces",
   }),
   palette: z.array(z.object({
     id: refId,
@@ -163,7 +193,7 @@ export const referenceBlueprintSchema = z.object({
     contrast: z.number().min(0).max(1).default(0.22),
     noise_density: z.number().min(0).max(0.9).default(0.18),
     edge_highlight: z.boolean().default(true),
-    tile_size: z.number().int().min(4).max(64).default(16),
+    tile_size: z.number().int().min(4).max(64).default(8),
   })).min(1).max(64),
   groups: z.array(groupSchema).min(1).max(2_000),
   locators: z.array(locatorSchema).max(2_000).default([]),
@@ -245,6 +275,8 @@ export interface ReferenceCompileResult {
     painted_pixel_count: number;
     flat_material_count: number;
     texture_style_breakdown: Record<string, number>;
+    uv_tiles_used: Record<string, number>;
+    uv_tile_overflow: Record<string, number>;
   };
 }
 
@@ -327,6 +359,56 @@ export function compileReferenceBlueprint(input: ReferenceBlueprintInput): Refer
         const roll = mix(primitive.twist[0], primitive.twist[1], t);
         box(`${prefix}_segment_${index + 1}`, primitive.parent, center, [width, length * 1.12, primitive.thickness], primitive.material, [round(pitch), round(yaw), round(roll)], primitive.mirror_x);
       }
+    } else if (primitive.kind === "layered_armor") {
+      for (let index = 0; index < primitive.layers; index++) {
+        const center = vector(primitive.center.map((value, axis) => value + primitive.layer_offset[axis] * index));
+        const size = vector(primitive.size.map((value, axis) => Math.max(0.05, value * (1 + primitive.scale_step[axis] * index))));
+        const rotation = vector(primitive.rotation.map((value, axis) => value + primitive.rotation_step[axis] * index));
+        box(`${prefix}_plate_${index + 1}`, primitive.parent, center, size, primitive.material, rotation, primitive.mirror_x);
+        if (primitive.trim_material && primitive.trim_thickness > 0) {
+          const trim = Math.min(primitive.trim_thickness, size[1] * 0.45);
+          const trimCenter: Vec3 = [center[0], center[1] - size[1] / 2 + trim / 2, center[2] - size[2] / 2 - trim / 2];
+          box(`${prefix}_trim_${index + 1}`, primitive.parent, trimCenter, [size[0] * 1.04, trim, trim], primitive.trim_material, rotation, primitive.mirror_x);
+        }
+      }
+    } else if (primitive.kind === "cage_frame") {
+      const center = vector(primitive.from.map((value, axis) => (value + primitive.to[axis]) / 2));
+      const size = vector(primitive.to.map((value, axis) => value - primitive.from[axis]));
+      if (size.some(value => value <= 0)) throw new Error(`Cage frame '${primitive.name}' must have from values smaller than to values`);
+      const rail = Math.min(primitive.rail_thickness, Math.min(...size) * 0.48);
+      const [cx, cy, cz] = center;
+      const [sx, sy, sz] = size;
+      for (const y of [cy - sy / 2 + rail / 2, cy + sy / 2 - rail / 2]) {
+        for (const z of [cz - sz / 2 + rail / 2, cz + sz / 2 - rail / 2]) {
+          box(`${prefix}_rail_x_${drafts.length}`, primitive.parent, [cx, y, z], [sx, rail, rail], primitive.material, primitive.rotation, primitive.mirror_x);
+        }
+      }
+      for (const x of [cx - sx / 2 + rail / 2, cx + sx / 2 - rail / 2]) {
+        for (const z of [cz - sz / 2 + rail / 2, cz + sz / 2 - rail / 2]) {
+          box(`${prefix}_rail_y_${drafts.length}`, primitive.parent, [x, cy, z], [rail, sy, rail], primitive.material, primitive.rotation, primitive.mirror_x);
+        }
+      }
+      for (const x of [cx - sx / 2 + rail / 2, cx + sx / 2 - rail / 2]) {
+        for (const y of [cy - sy / 2 + rail / 2, cy + sy / 2 - rail / 2]) {
+          box(`${prefix}_rail_z_${drafts.length}`, primitive.parent, [x, y, cz], [rail, rail, sz], primitive.material, primitive.rotation, primitive.mirror_x);
+        }
+      }
+      for (let index = 1; index <= primitive.vertical_bars; index++) {
+        const x = primitive.from[0] + sx * index / (primitive.vertical_bars + 1);
+        for (const z of [primitive.from[2] + rail / 2, primitive.to[2] - rail / 2]) {
+          box(`${prefix}_vertical_${index}_${z < cz ? "front" : "back"}`, primitive.parent, [x, cy, z], [rail, sy, rail], primitive.material, primitive.rotation, primitive.mirror_x);
+        }
+      }
+      for (let index = 1; index <= primitive.horizontal_bars; index++) {
+        const y = primitive.from[1] + sy * index / (primitive.horizontal_bars + 1);
+        for (const z of [primitive.from[2] + rail / 2, primitive.to[2] - rail / 2]) {
+          box(`${prefix}_horizontal_${index}_${z < cz ? "front" : "back"}`, primitive.parent, [cx, y, z], [sx, rail, rail], primitive.material, primitive.rotation, primitive.mirror_x);
+        }
+      }
+      for (let index = 1; index <= primitive.depth_braces; index++) {
+        const x = primitive.from[0] + sx * index / (primitive.depth_braces + 1);
+        box(`${prefix}_depth_${index}`, primitive.parent, [x, cy, cz], [rail, rail, sz], primitive.material, primitive.rotation, primitive.mirror_x);
+      }
     } else if (primitive.kind === "chain") {
       const delta = primitive.end.map((value, axis) => value - primitive.start[axis]);
       const yaw = Math.atan2(delta[0], delta[2]) * 180 / Math.PI;
@@ -408,10 +490,27 @@ export function compileReferenceBlueprint(input: ReferenceBlueprintInput): Refer
   }
 
   const textureNames = new Map(blueprint.palette.map(material => [material.id, `material_${clean(material.id)}.png`]));
+  const materialsById = new Map(blueprint.palette.map(material => [material.id, material]));
+  const uvTilesUsed: Record<string, number> = {};
+  const uvTileOverflow: Record<string, number> = {};
+  const allocateFace = (materialId: string) => {
+    const texture = textureNames.get(materialId);
+    const material = materialsById.get(materialId);
+    if (!texture || !material) throw new Error(`Missing compiled texture for material '${materialId}'`);
+    if (blueprint.art_direction.uv_layout === "shared") return { texture };
+    const tile = Math.min(material.tile_size, blueprint.project.texture_width, blueprint.project.texture_height);
+    const columns = Math.max(1, Math.floor(blueprint.project.texture_width / tile));
+    const rows = Math.max(1, Math.floor(blueprint.project.texture_height / tile));
+    const capacity = columns * rows;
+    const allocation = uvTilesUsed[materialId] ?? 0;
+    uvTilesUsed[materialId] = allocation + 1;
+    if (allocation >= capacity) uvTileOverflow[materialId] = (uvTileOverflow[materialId] ?? 0) + 1;
+    const index = allocation % capacity;
+    const x = index % columns * tile;
+    const y = Math.floor(index / columns) * tile;
+    return { texture, uv: [x, y, x + tile, y + tile] as [number, number, number, number] };
+  };
   const cubes = drafts.map(draft => {
-    const texture = textureNames.get(draft.material);
-    if (!texture) throw new Error(`Missing compiled texture for material '${draft.material}'`);
-    const face = { texture };
     return {
       name: draft.name,
       parent: draft.parent,
@@ -422,7 +521,11 @@ export function compileReferenceBlueprint(input: ReferenceBlueprintInput): Refer
       inflate: draft.inflate ?? 0,
       shade: draft.shade ?? true,
       box_uv: false,
-      faces: { north: face, south: face, east: face, west: face, up: face, down: face },
+      faces: {
+        north: allocateFace(draft.material), south: allocateFace(draft.material),
+        east: allocateFace(draft.material), west: allocateFace(draft.material),
+        up: allocateFace(draft.material), down: allocateFace(draft.material),
+      },
     };
   });
   const [minBudget, maxBudget] = blueprint.project.target_cube_budget;
@@ -431,6 +534,10 @@ export function compileReferenceBlueprint(input: ReferenceBlueprintInput): Refer
   if (cubes.length > maxBudget) warnings.push(`Compiled ${cubes.length} cubes, above target maximum ${maxBudget}; reduce repeated detail.`);
   if (blueprint.reference.detected_views.length < 2) warnings.push("Only one reference view was detected; side/back depth will require assumptions and turntable correction.");
   if (blueprint.reference.confidence < 0.65) warnings.push("Reference analysis confidence is low; build as a draft and request more views before finalizing.");
+  if (Object.keys(uvTileOverflow).length) {
+    const summary = Object.entries(uvTileOverflow).map(([material, count]) => `${material}:${count}`).join(", ");
+    warnings.push(`Packed UV capacity overflowed (${summary}); increase texture size or reduce tile_size to avoid repeated face regions.`);
+  }
 
   const textureStyleBreakdown: Record<string, number> = {};
   let paintedPixelCount = 0;
@@ -498,6 +605,8 @@ export function compileReferenceBlueprint(input: ReferenceBlueprintInput): Refer
       painted_pixel_count: paintedPixelCount,
       flat_material_count: flatMaterialCount,
       texture_style_breakdown: textureStyleBreakdown,
+      uv_tiles_used: uvTilesUsed,
+      uv_tile_overflow: uvTileOverflow,
     },
   };
 }

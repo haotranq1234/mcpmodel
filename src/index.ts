@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { BlockbenchBridge } from "./bridge.js";
+import { buildCombatCombo, combatComboSchema } from "./combat-animation.js";
 import { buildCutePet, petGeneratorSchema } from "./pet-generator.js";
 import { buildRigPreset, rigProfiles } from "./presets.js";
 import { analyzeModelQuality, type ProjectSnapshot, type QualityProfile } from "./quality.js";
@@ -24,7 +25,7 @@ const bridge = new BlockbenchBridge(host, port, token);
 await bridge.start();
 
 const server = new McpServer(
-  { name: "blockbench-mcp", version: "0.5.0" },
+  { name: "blockbench-mcp", version: "0.6.0" },
   {
     instructions: [
       "Use blockbench_status before editing.",
@@ -38,6 +39,7 @@ const server = new McpServer(
       "For image references, map every visible major part to semantic bones and compressed primitives, use mirror_x only for truly symmetric parts, and set dry_run first for complex 120+ cube models.",
       "For Fancy-style references, block out the silhouette with fewer large forms, use organic_fin for curved appendages, and assign material-aware pixel styles instead of many solid-color detail cubes.",
       "After turntable review, capture each important texture atlas and use blockbench_paint_texture for separate shadow, highlight, accent, wear, and emissive passes.",
+      "Use packed face UVs for painted references, layered_armor for overlapping knight plates, cage_frame for mechanical cargo structures, and blockbench_create_combat_combo for timed weapon sequences with SFX cues.",
       "For pets, prefer blockbench_create_pet over assembling plain boxes manually, then use blockbench_capture_turntable and blockbench_quality_report.",
       "A polished pet needs a readable silhouette, layered face, paired limbs, articulated ears/tail, and idle/walk/skill/death animation coverage.",
       "Run blockbench_audit_model before saving or exporting.",
@@ -239,6 +241,32 @@ server.registerTool(
       animations: [animation],
     });
     return textResult(await bridge.request("apply_model", spec));
+  },
+);
+
+server.registerTool(
+  "blockbench_create_combat_combo",
+  {
+    description: "Generate and apply a high-level 1–8 hit weapon combo with anticipation, contact, follow-through, recovery, body lunge, counter-rotation, timeline hit markers, and an SFX cue sheet.",
+    inputSchema: combatComboSchema,
+  },
+  async (input) => {
+    const combo = buildCombatCombo(input);
+    const live = await bridge.request<{
+      open: boolean; name?: string; format?: string; texture_size?: [number, number]; box_uv?: boolean;
+    }>("get_project_state");
+    if (!live.open) return { isError: true, ...textResult({ ok: false, error: "No open Blockbench project" }) };
+    const spec = modelSpecSchema.parse({
+      project: {
+        name: live.name ?? "model", format: live.format ?? "free",
+        texture_width: live.texture_size?.[0] ?? 64, texture_height: live.texture_size?.[1] ?? 64,
+        box_uv: live.box_uv ?? true,
+      },
+      mode: "append",
+      animations: [combo.animation],
+    });
+    const applied = await bridge.request("apply_model", spec);
+    return textResult({ ok: true, applied, hit_count: combo.hit_count, cue_sheet: combo.cue_sheet });
   },
 );
 

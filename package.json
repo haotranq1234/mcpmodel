@@ -1,6 +1,6 @@
 {
   "name": "blockbench-mcp-bridge",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Local MCP server and WebSocket bridge for precise AI-driven Blockbench modeling",
   "type": "module",
   "main": "dist/index.js",

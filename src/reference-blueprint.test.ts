@@ -16,8 +16,8 @@ function blueprint(): ReferenceBlueprintInput {
     project: {
       name: "Reference Boss Dry Run",
       format: "free",
-      texture_width: 64,
-      texture_height: 64,
+      texture_width: 128,
+      texture_height: 128,
       box_uv: false,
       target_cube_budget: [40, 80],
     },
@@ -82,6 +82,34 @@ test("compiles curved organic fins for Fancy-style silhouettes", () => {
   const result = compileReferenceBlueprint(input);
   assert.equal(result.report.primitive_breakdown.organic_fin, 1);
   assert.equal(result.spec.cubes.filter(cube => cube.name.startsWith("tail_fin_segment_")).length, 5);
+});
+
+test("packs cube faces into distinct material UV tiles", () => {
+  const result = compileReferenceBlueprint(blueprint());
+  const faces = result.spec.cubes[0].faces!;
+  assert.notDeepEqual(faces.north!.uv, faces.south!.uv);
+  assert.ok((result.report.uv_tiles_used.stone ?? 0) > 6);
+  assert.deepEqual(result.report.uv_tile_overflow, {});
+});
+
+test("compiles overlapping armor plates and cargo cage frames", () => {
+  const input = blueprint();
+  input.primitives.push({
+    kind: "layered_armor", id: "pauldron", name: "layered_pauldron", parent: "body",
+    material: "stone", trim_material: "bronze", center: [8, 22, 0], size: [6, 3, 5], layers: 3,
+    layer_offset: [0.5, -1, 0.4], scale_step: [-0.08, -0.05, -0.05], rotation: [0, 0, -10], rotation_step: [0, 0, -5], trim_thickness: 0.2,
+    mirror_x: true,
+  });
+  input.primitives.push({
+    kind: "cage_frame", id: "cargo", name: "cargo_cage", parent: "body", material: "bronze",
+    from: [-4, 4, 3], to: [4, 12, 11], rail_thickness: 0.3, vertical_bars: 2, horizontal_bars: 1, depth_braces: 1,
+    rotation: [0, 0, 0], mirror_x: false,
+  });
+  const result = compileReferenceBlueprint(input);
+  assert.equal(result.report.primitive_breakdown.layered_armor, 1);
+  assert.equal(result.report.primitive_breakdown.cage_frame, 1);
+  assert.ok(result.spec.cubes.some(cube => cube.name.startsWith("pauldron_plate_")));
+  assert.ok(result.spec.cubes.some(cube => cube.name.startsWith("cargo_vertical_")));
 });
 
 test("mirrors exact geometry across X without duplicating centered parts", () => {

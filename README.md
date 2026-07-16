@@ -1,4 +1,4 @@
-# Blockbench MCP Bridge 0.5
+# Blockbench MCP Bridge 0.6
 
 MCP server cục bộ cho phép AI điều khiển Blockbench bằng các thao tác có cấu trúc, không chạy JavaScript tùy ý. Server dùng MCP `stdio`; plugin Blockbench kết nối đến server bằng WebSocket chỉ trên loopback.
 
@@ -11,6 +11,8 @@ MCP server cục bộ cho phép AI điều khiển Blockbench bằng các thao t
 - Box UV hoặc UV riêng cho sáu mặt; gán texture theo tên.
 - Tạo texture pixel material-aware theo phong cách hand-painted: metal, cloth, organic, bone và crystal với shadow/highlight/hue-shift/accent xác định.
 - Chụp atlas texture để AI nhìn trực tiếp rồi sơn hoặc sửa từng pixel trong project đang mở.
+- Packed face UV tự cấp vùng texture riêng cho từng mặt cube, có báo tràn atlas và gợi ý tăng resolution/giảm tile.
+- Sinh combo chiến đấu 1–8 hit có anticipation, contact, follow-through, recovery, body lunge, hit marker và cue SFX.
 - Tạo animation rotation, position và scale theo keyframe.
 - Advanced animation: Molang, pre/post data points, bezier handles và timeline markers để đồng bộ skill.
 - Rig preset chuyên nghiệp cho weapon, ModelEngine pet, quadruped pet và humanoid golem.
@@ -55,6 +57,7 @@ Mặc định bridge dùng `127.0.0.1:32145` và token `blockbench-mcp-local`, k
 - `blockbench_patch_model`: sửa cube/bone hoặc xóa cube theo tên/UUID sau khi xem turntable, có Undo nguyên tử.
 - `blockbench_capture_texture`: chụp atlas kèm số màu, pixel trong suốt và kích thước để AI kiểm tra chất lượng texture.
 - `blockbench_paint_texture`: sơn lại texture hiện có bằng pixel rectangle chính xác, có Undo trong Blockbench.
+- `blockbench_create_combat_combo`: tạo combo vũ khí cấp cao và trả cue sheet thời gian/SFX cho từng hit.
 - `blockbench_add_animation`: thêm animation nâng cao vào project hiện tại.
 - `blockbench_get_project`: đọc bone, cube, texture, animation và giới hạn model.
 - `blockbench_audit_model`: kiểm tra geometry, UV, texture, rig, loop và display transforms.
@@ -91,8 +94,12 @@ Primitive nén hiện có:
 - `ribcage`: xương sườn, cột sống và lõi tùy chọn.
 - `armor_plate`: giáp nền với bốn cạnh trim.
 - `organic_fin`: đường cong nhiều phiến cho vây, đuôi, sừng, vải, tóc, lửa hoặc silhouette sinh vật hữu cơ.
+- `layered_armor`: các phiến giáp chồng có taper, offset, fan rotation và trim riêng cho vai, tay, chân hoặc mũ.
+- `cage_frame`: khung hộp 12 cạnh kèm vertical/horizontal/depth bars cho cargo, lồng, máy móc và giáp hở.
 
-Schema 0.5 có `art_direction.geometry_style`, `texture_style`, `silhouette_priority` và `paint_passes`. Material có thể khai báo `style`, `accent_colors`, `contrast`, `noise_density`, `edge_highlight`, `tile_size` và seed ổn định. Cách làm này được rút ra từ luồng blockout → silhouette → pixel paint → kiểm tra cuối trong video [Luyện tay nâng cấp model #7](https://www.youtube.com/watch?v=whlhnnX4UTU) của PhongAqua/Fancy Minecraft Vietnam.
+Schema 0.6 có `art_direction.geometry_style`, `texture_style`, `silhouette_priority`, `uv_layout` và `paint_passes`. Material có thể khai báo `style`, `accent_colors`, `contrast`, `noise_density`, `edge_highlight`, `tile_size` và seed ổn định. Cách làm này được rút ra từ luồng blockout → silhouette → pixel paint → kiểm tra cuối trong video [Luyện tay nâng cấp model #7](https://www.youtube.com/watch?v=whlhnnX4UTU) của PhongAqua/Fancy Minecraft Vietnam.
+
+Nghiên cứu 0.6 bổ sung ba case: [Possessed Knight Armor](https://youtu.be/ypcqWzc1LYg) cho giáp chồng lớp và texture theo mặt, [Axe Combo Attack](https://youtu.be/5EQTxoDnDHM) cho nhịp anticipation/contact/follow-through kèm SFX, và [Ocean Cargo Fish](https://youtu.be/2pc-iXRSjYM) cho khung cargo cơ khí kết hợp silhouette sinh vật.
 
 Ảnh reference nhiều góc như concept sheet front/side/back cho kết quả tốt nhất. Nếu chỉ có một góc, compiler sẽ cảnh báo cần giả định chiều sâu và yêu cầu sửa qua turntable.
 
