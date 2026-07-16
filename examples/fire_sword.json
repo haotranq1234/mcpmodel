@@ -1,0 +1,81 @@
+{
+  "project": {
+    "name": "Fire Sword",
+    "format": "free",
+    "texture_width": 32,
+    "texture_height": 32,
+    "box_uv": true
+  },
+  "mode": "replace",
+  "groups": [
+    { "id": "weapon", "name": "weapon", "origin": [0, 8, 0], "rotation": [0, 0, 0] },
+    { "id": "blade", "name": "blade", "parent": "weapon", "origin": [0, 8, 0], "rotation": [0, 0, 0] }
+  ],
+  "textures": [
+    {
+      "name": "fire_sword.png",
+      "width": 32,
+      "height": 32,
+      "fill": "#2b1721ff",
+      "pixels": [
+        { "x": 0, "y": 0, "width": 8, "height": 8, "color": "#ff8a00ff" },
+        { "x": 8, "y": 0, "width": 8, "height": 8, "color": "#ffd24aff" },
+        { "x": 16, "y": 0, "width": 8, "height": 8, "color": "#8b1e2dff" }
+      ]
+    }
+  ],
+  "cubes": [
+    {
+      "name": "grip",
+      "parent": "weapon",
+      "from": [-1, 0, -1],
+      "to": [1, 7, 1],
+      "origin": [0, 8, 0],
+      "uv_offset": [0, 0]
+    },
+    {
+      "name": "guard",
+      "parent": "weapon",
+      "from": [-5, 7, -1.5],
+      "to": [5, 9, 1.5],
+      "origin": [0, 8, 0],
+      "uv_offset": [8, 0]
+    },
+    {
+      "name": "blade_core",
+      "parent": "blade",
+      "from": [-1.5, 9, -0.75],
+      "to": [1.5, 25, 0.75],
+      "origin": [0, 8, 0],
+      "uv_offset": [16, 0]
+    },
+    {
+      "name": "blade_tip",
+      "parent": "blade",
+      "from": [-1, 25, -0.5],
+      "to": [1, 29, 0.5],
+      "origin": [0, 8, 0],
+      "rotation": [0, 0, 45],
+      "uv_offset": [24, 0]
+    }
+  ],
+  "animations": [
+    {
+      "name": "idle_glow",
+      "length": 1,
+      "loop": "loop",
+      "snapping": 20,
+      "tracks": [
+        {
+          "bone": "blade",
+          "keyframes": [
+            { "time": 0, "channel": "scale", "vector": [1, 1, 1], "interpolation": "linear" },
+            { "time": 0.5, "channel": "scale", "vector": [1.05, 1.02, 1.05], "interpolation": "linear" },
+            { "time": 1, "channel": "scale", "vector": [1, 1, 1], "interpolation": "linear" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+

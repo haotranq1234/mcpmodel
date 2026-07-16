@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "blockbench": {
+      "command": "node",
+      "args": [
+        "C:/Users/user/Documents/pack/dist/index.js"
+      ],
+      "env": {
+        "BLOCKBENCH_MCP_HOST": "127.0.0.1",
+        "BLOCKBENCH_MCP_PORT": "32145",
+        "BLOCKBENCH_MCP_TOKEN": "blockbench-mcp-local"
+      }
+    }
+  }
+}
+
