@@ -48,3 +48,10 @@ This report records structural observations only. The purchased model and textur
 - Advanced keyframes with Molang values, two data points, bezier handles, and timeline markers.
 - Model audit for geometry, UVs, textures, rigging, animation loops, texture strips, and display transforms.
 - Local `.bbmodel` opening, active-format capability discovery, and format-aware export.
+
+## Version 0.3 visual-loop findings
+
+- Structural validity is not the same as visual quality. A model can pass UV/rig checks while nested bone rotations make a tail appear detached.
+- Pet generation now keeps static tail shaping on cubes and reserves bone rotation for animation, preventing compounded transforms.
+- The pet generator targets 40–55 semantically named cubes, 18–24 groups, layered eyes/cheeks/muzzle, three-layer paws, articulated ears/tail, three skill sockets, and idle/walk/skill/death coverage.
+- `blockbench_quality_report` reports a structural score and explicitly marks `visual_review_required`; `blockbench_capture_turntable` provides the required hero/front/side/back evidence.

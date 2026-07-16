@@ -3,7 +3,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { BlockbenchBridge } from "./bridge.js";
+import { buildCutePet, petGeneratorSchema } from "./pet-generator.js";
 import { buildRigPreset, rigProfiles } from "./presets.js";
+import { analyzeModelQuality, type ProjectSnapshot, type QualityProfile } from "./quality.js";
 import { animationSchema, modelSpecSchema, validateModelReferences } from "./schemas.js";
 
 const host = process.env.BLOCKBENCH_MCP_HOST ?? "127.0.0.1";
@@ -21,7 +23,7 @@ const bridge = new BlockbenchBridge(host, port, token);
 await bridge.start();
 
 const server = new McpServer(
-  { name: "blockbench-mcp", version: "0.2.0" },
+  { name: "blockbench-mcp", version: "0.3.0" },
   {
     instructions: [
       "Use blockbench_status before editing.",
@@ -31,6 +33,8 @@ const server = new McpServer(
       "Use stable group IDs and reference those IDs from cube parents and animation tracks.",
       "Keep cube from coordinates strictly smaller than to coordinates.",
       "Use blockbench_capture_preview after major edits to visually inspect the result.",
+      "For pets, prefer blockbench_create_pet over assembling plain boxes manually, then use blockbench_capture_turntable and blockbench_quality_report.",
+      "A polished pet needs a readable silhouette, layered face, paired limbs, articulated ears/tail, and idle/walk/skill/death animation coverage.",
       "Run blockbench_audit_model before saving or exporting.",
       "Never claim a model was saved unless blockbench_save_project succeeds.",
     ].join(" "),
@@ -56,6 +60,20 @@ server.registerTool(
 );
 
 server.registerTool(
+  "blockbench_create_pet",
+  {
+    description: "Generate and apply a polished layered chibi pet (fox, wolf, cat, or rabbit) from a compact art-direction brief. Includes semantic rigging, face details, articulated tail/ears, accessory, textures, locators, and production animation set.",
+    inputSchema: petGeneratorSchema,
+  },
+  async (input) => {
+    const spec = buildCutePet(input);
+    const errors = validateModelReferences(spec);
+    if (errors.length) return { isError: true, ...textResult({ ok: false, validationErrors: errors }) };
+    return textResult(await bridge.request("apply_model", spec));
+  },
+);
+
+server.registerTool(
   "blockbench_apply_model",
   {
     description: "Atomically create or append a precise Blockbench model from groups/bones, cubes, UVs, textures, pixel patches, and animations.",
@@ -69,6 +87,34 @@ server.registerTool(
     }
     return textResult(await bridge.request("apply_model", spec));
   },
+);
+
+server.registerTool(
+  "blockbench_patch_model",
+  {
+    description: "Atomically refine existing cubes and bones by stable name/UUID after visual review, or remove unwanted cubes. Use this for turntable-driven correction without rebuilding the project.",
+    inputSchema: z.object({
+      cubes: z.array(z.object({
+        id: z.string().min(1),
+        name: z.string().min(1).optional(),
+        from: z.tuple([z.number(), z.number(), z.number()]).optional(),
+        to: z.tuple([z.number(), z.number(), z.number()]).optional(),
+        origin: z.tuple([z.number(), z.number(), z.number()]).optional(),
+        rotation: z.tuple([z.number(), z.number(), z.number()]).optional(),
+        inflate: z.number().finite().optional(),
+        visibility: z.boolean().optional(),
+      })).max(1_000).default([]),
+      groups: z.array(z.object({
+        id: z.string().min(1),
+        name: z.string().min(1).optional(),
+        origin: z.tuple([z.number(), z.number(), z.number()]).optional(),
+        rotation: z.tuple([z.number(), z.number(), z.number()]).optional(),
+        visibility: z.boolean().optional(),
+      })).max(1_000).default([]),
+      remove_cubes: z.array(z.string().min(1)).max(1_000).default([]),
+    }),
+  },
+  async (input) => textResult(await bridge.request("patch_model", input)),
 );
 
 server.registerTool(
@@ -139,6 +185,18 @@ server.registerTool(
 );
 
 server.registerTool(
+  "blockbench_quality_report",
+  {
+    description: "Score the active model's art quality using structural lessons from professional weapon, pet, and golem packs: silhouette layering, semantic naming, detail density, symmetry, rig coverage, and animation timing.",
+    inputSchema: z.object({ profile: z.enum(["generic", "pet", "weapon", "golem"]).default("generic") }),
+  },
+  async ({ profile }) => {
+    const snapshot = await bridge.request<ProjectSnapshot>("get_project_state");
+    return textResult(analyzeModelQuality(snapshot, profile as QualityProfile));
+  },
+);
+
+server.registerTool(
   "blockbench_list_capabilities",
   { description: "List Blockbench model formats and the capabilities/codec of the active format." },
   async () => textResult(await bridge.request("list_capabilities")),
@@ -187,6 +245,55 @@ server.registerTool(
         { type: "text" as const, text: `Blockbench preview ${result.width}x${result.height}` },
       ],
     };
+  },
+);
+
+server.registerTool(
+  "blockbench_capture_turntable",
+  {
+    description: "Automatically frame and capture hero, front, side, and back views of the active model for an AI visual refinement loop.",
+    inputSchema: z.object({
+      views: z.array(z.enum(["hero", "front", "side", "back"])).min(1).max(4).default(["hero", "front", "side", "back"]),
+      width: z.number().int().min(128).max(2048).default(640),
+      height: z.number().int().min(128).max(2048).default(640),
+      orthographic: z.boolean().default(false),
+      distance: z.number().positive().max(10).default(1.8).describe("Camera distance multiplier relative to the largest model dimension"),
+    }),
+  },
+  async (input) => {
+    const snapshot = await bridge.request<ProjectSnapshot>("get_project_state");
+    if (!snapshot.open || !snapshot.bounds) {
+      return { isError: true, ...textResult({ ok: false, error: "No model geometry is open in Blockbench" }) };
+    }
+    const { min, max, size } = snapshot.bounds;
+    const target = [
+      (min[0] + max[0]) / 2,
+      (min[1] + max[1]) / 2 + size[1] * 0.05,
+      (min[2] + max[2]) / 2,
+    ];
+    const distance = Math.max(...size) * input.distance;
+    const positions: Record<string, number[]> = {
+      hero: [target[0] + distance * 0.72, target[1] + distance * 0.38, target[2] - distance * 0.72],
+      front: [target[0], target[1] + size[1] * 0.08, target[2] - distance],
+      side: [target[0] + distance, target[1] + size[1] * 0.08, target[2]],
+      back: [target[0], target[1] + size[1] * 0.08, target[2] + distance],
+    };
+    const content: Array<
+      { type: "text"; text: string } |
+      { type: "image"; mimeType: string; data: string }
+    > = [];
+    for (const view of input.views) {
+      await bridge.request("set_camera", {
+        position: positions[view], target, orthographic: input.orthographic, fov: 35,
+      });
+      const preview = await bridge.request<{ data_url: string; width: number; height: number }>("capture_preview", {
+        width: input.width, height: input.height, crop: false,
+      });
+      const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(preview.data_url);
+      content.push({ type: "text", text: `${view} view ${preview.width}x${preview.height}` });
+      if (match) content.push({ type: "image", mimeType: match[1], data: match[2] });
+    }
+    return { content };
   },
 );
 

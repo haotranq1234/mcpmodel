@@ -1,17 +1,30 @@
 /* Blockbench MCP Bridge - local, structured Blockbench automation */
 (() => {
   const PLUGIN_ID = 'blockbench_mcp_bridge';
-  const PLUGIN_VERSION = '0.2.0';
+  const PLUGIN_VERSION = '0.3.0';
   const FACE_DIRECTIONS = ['north', 'south', 'east', 'west', 'up', 'down'];
   let socket = null;
   let reconnectTimer = null;
   let manualDisconnect = false;
   let actions = [];
   let pluginSettings = [];
+  const CONFIG_KEY = 'blockbench_mcp_bridge_config';
+  const DEFAULT_CONFIG = { host: '127.0.0.1', port: 32145, token: 'blockbench-mcp-local' };
+
+  function getBridgeConfig() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}');
+      const host = ['127.0.0.1', 'localhost', '::1'].includes(stored.host) ? stored.host : DEFAULT_CONFIG.host;
+      const port = Number.isInteger(Number(stored.port)) && Number(stored.port) >= 1 && Number(stored.port) <= 65535
+        ? Number(stored.port) : DEFAULT_CONFIG.port;
+      return { host, port, token: String(stored.token || DEFAULT_CONFIG.token) };
+    } catch {
+      return { ...DEFAULT_CONFIG };
+    }
+  }
 
   function bridgeUrl() {
-    const host = String(Settings.get('blockbench_mcp_host') || '127.0.0.1');
-    const port = Number(Settings.get('blockbench_mcp_port') || 32145);
+    const { host, port } = getBridgeConfig();
     return `ws://${host}:${port}`;
   }
 
@@ -50,7 +63,7 @@
     socket.addEventListener('open', () => {
       send({
         type: 'hello',
-        token: String(Settings.get('blockbench_mcp_token') || 'blockbench-mcp-local'),
+        token: getBridgeConfig().token,
         client: {
           name: 'Blockbench Desktop',
           blockbenchVersion: Blockbench.version,
@@ -395,6 +408,68 @@
     }
   }
 
+  function findByIdOrName(items, id, type) {
+    const item = items.find(candidate => candidate.uuid === id || candidate.name === id);
+    if (!item) throw new Error(`Cannot find ${type} '${id}'`);
+    return item;
+  }
+
+  function patchModel(options) {
+    if (!Project) throw new Error('No open project');
+    const cubePatches = options.cubes || [];
+    const groupPatches = options.groups || [];
+    const removeCubes = options.remove_cubes || [];
+    const touchedCubes = new Set();
+    const touchedGroups = new Set();
+    const removed = [];
+    Undo.initEdit({ outliner: true, elements: Cube.all.slice() });
+    try {
+      for (const patch of cubePatches) {
+        const cube = findByIdOrName(Cube.all, patch.id, 'cube');
+        const from = patch.from || cube.from;
+        const to = patch.to || cube.to;
+        assertVector(from, 3, `Cube '${cube.name}' from`);
+        assertVector(to, 3, `Cube '${cube.name}' to`);
+        if (from.some((value, axis) => value >= to[axis])) throw new Error(`Cube '${cube.name}' patch has invalid bounds`);
+        const data = {};
+        for (const key of ['name', 'from', 'to', 'origin', 'rotation', 'inflate', 'visibility']) {
+          if (patch[key] !== undefined) data[key] = patch[key];
+        }
+        cube.extend(data);
+        touchedCubes.add(cube);
+      }
+      for (const patch of groupPatches) {
+        const group = findByIdOrName(Group.all, patch.id, 'group');
+        const data = {};
+        for (const key of ['name', 'origin', 'rotation', 'visibility']) {
+          if (patch[key] !== undefined) data[key] = patch[key];
+        }
+        group.extend(data);
+        touchedGroups.add(group);
+      }
+      for (const ref of removeCubes) {
+        const cube = findByIdOrName(Cube.all, ref, 'cube');
+        removed.push({ name: cube.name, uuid: cube.uuid });
+        cube.remove();
+      }
+      Canvas.updateAll();
+      Project.saved = false;
+      Undo.finishEdit('Patch MCP model');
+      return {
+        ok: true,
+        updated: {
+          cubes: [...touchedCubes].map(cube => ({ name: cube.name, uuid: cube.uuid })),
+          groups: [...touchedGroups].map(group => ({ name: group.name, uuid: group.uuid })),
+        },
+        removed: { cubes: removed },
+        bounds: calculateBounds(),
+      };
+    } catch (error) {
+      Undo.cancelEdit();
+      throw error;
+    }
+  }
+
   function calculateBounds() {
     if (!Cube.all.length) return null;
     const min = [Infinity, Infinity, Infinity];
@@ -430,7 +505,7 @@
         uuid: locator.uuid,
         name: locator.name,
         parent: locator.parent === 'root' ? null : locator.parent.uuid,
-        position: locator.from.slice(),
+        position: (locator.from || locator.position || [0, 0, 0]).slice(),
       })),
       cubes: Cube.all.map(cube => {
         const result = {
@@ -443,11 +518,11 @@
           rotation: cube.rotation.slice(),
           inflate: cube.inflate,
           box_uv: cube.box_uv,
-          uv_offset: cube.uv_offset.slice(),
+          uv_offset: (cube.uv_offset || [0, 0]).slice(),
         };
         if (options.include_uv) {
           result.faces = Object.fromEntries(FACE_DIRECTIONS.map(direction => [direction, {
-            uv: cube.faces[direction].uv.slice(),
+            uv: (cube.faces[direction].uv || [0, 0, 0, 0]).slice(),
             texture: cube.faces[direction].texture,
             enabled: cube.faces[direction].enabled,
           }]));
@@ -703,6 +778,7 @@
       case 'ping': return { ok: true, version: PLUGIN_VERSION };
       case 'get_project_state': return getProjectState(params);
       case 'apply_model': return await applyModel(params);
+      case 'patch_model': return patchModel(params);
       case 'set_camera': return setCamera(params);
       case 'capture_preview': return await capturePreview(params);
       case 'save_project': return saveProject(params);
@@ -724,20 +800,12 @@
     variant: 'both',
     tags: ['Modeling', 'Animation', 'Developer Tools'],
     onload() {
-      Settings.addCategory('blockbench_mcp', { name: 'Blockbench MCP', open: true });
-      pluginSettings = [
-        new Setting('blockbench_mcp_host', {
-          name: 'Bridge host', type: 'text', value: '127.0.0.1', category: 'blockbench_mcp',
-          description: 'Loopback host used by the local MCP server.',
-        }),
-        new Setting('blockbench_mcp_port', {
-          name: 'Bridge port', type: 'number', value: 32145, min: 1, max: 65535, category: 'blockbench_mcp',
-        }),
-        new Setting('blockbench_mcp_token', {
-          name: 'Bridge token', type: 'password', value: 'blockbench-mcp-local', category: 'blockbench_mcp',
-          description: 'Must match BLOCKBENCH_MCP_TOKEN.',
-        }),
-      ];
+      // A local plugin can be loaded before the Settings dialog/sidebar is mounted.
+      // In that case, using the existing General category avoids a startup crash.
+      // Keep local bridge settings dependency-free so file plugins can load even
+      // before Blockbench mounts the Settings dialog. Environment/config defaults
+      // remain 127.0.0.1:32145 with token "blockbench-mcp-local".
+      pluginSettings = [];
 
       actions = [
         new Action('blockbench_mcp_connect', {
@@ -745,6 +813,30 @@
         }),
         new Action('blockbench_mcp_disconnect', {
           name: 'Disconnect Blockbench MCP', icon: 'link_off', click: disconnect,
+        }),
+        new Action('blockbench_mcp_configure', {
+          name: 'Configure Blockbench MCP', icon: 'settings_ethernet', click: () => {
+            const config = getBridgeConfig();
+            new Dialog('blockbench_mcp_config_dialog', {
+              title: 'Blockbench MCP Bridge',
+              form: {
+                host: { label: 'Host (loopback only)', type: 'text', value: config.host },
+                port: { label: 'Port', type: 'number', value: config.port, min: 1, max: 65535 },
+                token: { label: 'Token', type: 'password', value: config.token },
+              },
+              onConfirm(form) {
+                if (!['127.0.0.1', 'localhost', '::1'].includes(String(form.host))) {
+                  Blockbench.showQuickMessage('MCP host must be loopback', 2500);
+                  return;
+                }
+                localStorage.setItem(CONFIG_KEY, JSON.stringify({ host: String(form.host), port: Number(form.port), token: String(form.token) }));
+                this.hide();
+                if (socket) socket.close(1000, 'Configuration changed');
+                socket = null;
+                connect(true);
+              },
+            }).show();
+          },
         }),
         new Action('blockbench_mcp_status', {
           name: 'Blockbench MCP Status', icon: 'info', click: () => {
