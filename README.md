@@ -1,4 +1,4 @@
-# Blockbench MCP Bridge 0.3
+# Blockbench MCP Bridge 0.4
 
 MCP server cục bộ cho phép AI điều khiển Blockbench bằng các thao tác có cấu trúc, không chạy JavaScript tùy ý. Server dùng MCP `stdio`; plugin Blockbench kết nối đến server bằng WebSocket chỉ trên loopback.
 
@@ -6,6 +6,7 @@ MCP server cục bộ cho phép AI điều khiển Blockbench bằng các thao t
 
 - Tạo project Blockbench mới hoặc thêm chi tiết vào project đang mở.
 - Sinh pet chibi chất lượng cao từ brief ngắn: fox/wolf/cat/rabbit, bảng màu, phụ kiện, scale và bộ animation.
+- Nhận ảnh reference qua ChatGPT vision, biên dịch blueprint nén thành model Blockbench thay vì bắt AI liệt kê hàng trăm cube thủ công.
 - Dựng group/bone phân cấp và cube với tọa độ, pivot, rotation, inflate chính xác.
 - Box UV hoặc UV riêng cho sáu mặt; gán texture theo tên.
 - Tạo texture pixel từ màu nền và các vùng màu, hoặc dùng PNG/base64/đường dẫn cục bộ.
@@ -49,6 +50,7 @@ Mặc định bridge dùng `127.0.0.1:32145` và token `blockbench-mcp-local`, k
 - `blockbench_create_rig`: tạo rig weapon/pet/quadruped/golem chuẩn hóa.
 - `blockbench_create_pet`: dựng pet chibi hoàn chỉnh từ art-direction cấp cao, gồm 40+ cube có tên, 20 bone, texture, socket và animation.
 - `blockbench_apply_model`: áp dụng toàn bộ model specification.
+- `blockbench_build_from_reference`: nhận blueprint do ChatGPT phân tích từ ảnh; hỗ trợ dry-run và compiler geometry cấp cao.
 - `blockbench_patch_model`: sửa cube/bone hoặc xóa cube theo tên/UUID sau khi xem turntable, có Undo nguyên tử.
 - `blockbench_add_animation`: thêm animation nâng cao vào project hiện tại.
 - `blockbench_get_project`: đọc bone, cube, texture, animation và giới hạn model.
@@ -61,6 +63,33 @@ Mặc định bridge dùng `127.0.0.1:32145` và token `blockbench-mcp-local`, k
 - `blockbench_export_model`: export bằng codec của format hiện tại.
 
 Quy trình pet nên dùng: `status` → `create_pet` → `capture_turntable` → `quality_report` → sửa theo ảnh → chụp lại → `audit_model` → `save_project`. Với vũ khí/golem: `create_rig` → `apply_model` rồi dùng cùng vòng kiểm tra.
+
+## Vẽ từ ảnh gửi trong ChatGPT
+
+Khi người dùng đính kèm ảnh, ChatGPT/Codex vision đọc trực tiếp ảnh rồi gọi `blockbench_build_from_reference`. Trường `source_image` chỉ lưu nguồn tham chiếu; bridge không tự đoán nội dung ảnh từ tên file. Vì vậy không cần API key thứ hai khi MCP được dùng từ một client đã có khả năng nhìn ảnh.
+
+Quy trình bắt buộc:
+
+1. AI đọc front/side/back/detail trong ảnh, tỷ lệ, palette và danh sách bộ phận.
+2. AI gửi blueprint với bone, material và primitive, lần đầu đặt `dry_run: true`.
+3. MCP bung blueprint thành cube và báo số lượng, reference lỗi và cảnh báo độ tin cậy mà không thay đổi Blockbench.
+4. Sau khi dry-run hợp lệ, AI gọi lại với `dry_run: false`.
+5. AI chụp turntable, so sánh với ảnh gốc và dùng `blockbench_patch_model` để sửa sai khác.
+
+Primitive nén hiện có:
+
+- `box`: khối chính xác hoặc mirror theo trục X.
+- `tapered_stack`: tay, chân, cán vũ khí, sừng hoặc khối thuôn nhiều đoạn.
+- `chain`: chuỗi mắt xích xen kẽ giữa hai điểm.
+- `ragged_panel`: áo choàng/vải rách với độ dài mép biến thiên.
+- `crystal_cluster`: lõi và cụm tinh thể thường/emissive.
+- `skull`: hộp sọ nhiều lớp gồm mắt, má, hàm và răng.
+- `ribcage`: xương sườn, cột sống và lõi tùy chọn.
+- `armor_plate`: giáp nền với bốn cạnh trim.
+
+Ảnh reference nhiều góc như concept sheet front/side/back cho kết quả tốt nhất. Nếu chỉ có một góc, compiler sẽ cảnh báo cần giả định chiều sâu và yêu cầu sửa qua turntable.
+
+Thiết kế này bám theo luồng multimodal chính thức: model có thể nhận ảnh bằng URL, data URL base64 hoặc file ID; kết quả phân tích được ép về schema trước khi gọi compiler. Tham khảo [OpenAI Images and Vision](https://developers.openai.com/api/docs/guides/images-vision) và [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
 
 Ví dụ pet cáo:
 

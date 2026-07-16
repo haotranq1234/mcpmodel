@@ -55,3 +55,11 @@ This report records structural observations only. The purchased model and textur
 - Pet generation now keeps static tail shaping on cubes and reserves bone rotation for animation, preventing compounded transforms.
 - The pet generator targets 40–55 semantically named cubes, 18–24 groups, layered eyes/cheeks/muzzle, three-layer paws, articulated ears/tail, three skill sockets, and idle/walk/skill/death coverage.
 - `blockbench_quality_report` reports a structural score and explicitly marks `visual_review_required`; `blockbench_capture_turntable` provides the required hero/front/side/back evidence.
+
+## Version 0.4 image-reference pipeline
+
+- The vision-capable chat client owns image understanding; the MCP tool receives a strict blueprint so it never pretends to infer pixels from a file name.
+- `dry_run` compiles and validates the full blueprint without contacting Blockbench. A live before/after check confirmed project counts remain unchanged.
+- Repeated visual motifs are compressed into eight primitives: box, tapered stack, chain, ragged panel, crystal cluster, skull, rib cage, and trimmed armor plate.
+- `mirror_x` expands truly symmetric parts while keeping asymmetrical chains, cloth damage, crystals, and weapons explicit.
+- Reference metadata records detected views, confidence, assumptions, source image, and target cube budget. Missing orthographic views and low confidence become actionable warnings.

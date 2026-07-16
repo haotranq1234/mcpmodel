@@ -83,7 +83,7 @@ export class BlockbenchBridge {
             project: message.client?.project,
             connectedAt: new Date().toISOString(),
           };
-          socket.send(JSON.stringify({ type: "hello_ack", server: "blockbench-mcp", version: "0.3.0" }));
+          socket.send(JSON.stringify({ type: "hello_ack", server: "blockbench-mcp", version: "0.4.0" }));
           return;
         }
 

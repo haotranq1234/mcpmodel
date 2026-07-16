@@ -25,6 +25,7 @@ test("starts over stdio and exposes the Blockbench tools", async () => {
     "blockbench_add_animation",
     "blockbench_apply_model",
     "blockbench_audit_model",
+    "blockbench_build_from_reference",
     "blockbench_capture_preview",
     "blockbench_capture_turntable",
     "blockbench_create_pet",
@@ -39,5 +40,33 @@ test("starts over stdio and exposes the Blockbench tools", async () => {
     "blockbench_set_camera",
     "blockbench_status",
   ]);
+
+  const dryRun = await client.callTool({
+    name: "blockbench_build_from_reference",
+    arguments: {
+      dry_run: true,
+      blueprint: {
+        reference: {
+          source_image: "attachment://reference.png",
+          subject: "Small armored reference prop",
+          detected_views: ["front", "right"],
+          confidence: 0.9,
+        },
+        project: { name: "Reference dry run", target_cube_budget: [1, 10] },
+        palette: [{ id: "metal", color: "#443F3B" }],
+        groups: [{ id: "root", name: "reference_root" }],
+        primitives: [{
+          kind: "armor_plate", id: "plate", name: "front_plate", parent: "root",
+          material: "metal", trim_material: "metal", from: [-2, 0, -1], to: [2, 4, 1], trim: 0.25,
+        }],
+      },
+    },
+  });
+  assert.equal(dryRun.isError, undefined);
+  const dryRunContent = dryRun.content as Array<{ type: string; text?: string }>;
+  const parsed = JSON.parse(dryRunContent.find(item => item.type === "text")?.text ?? "{}");
+  assert.equal(parsed.dry_run, true);
+  assert.equal(parsed.ready_to_build, true);
+  assert.equal(parsed.compile.cube_count, 5);
   await client.close();
 });

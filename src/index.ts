@@ -6,6 +6,7 @@ import { BlockbenchBridge } from "./bridge.js";
 import { buildCutePet, petGeneratorSchema } from "./pet-generator.js";
 import { buildRigPreset, rigProfiles } from "./presets.js";
 import { analyzeModelQuality, type ProjectSnapshot, type QualityProfile } from "./quality.js";
+import { compileReferenceBlueprint, referenceBuildToolSchema } from "./reference-blueprint.js";
 import { animationSchema, modelSpecSchema, validateModelReferences } from "./schemas.js";
 
 const host = process.env.BLOCKBENCH_MCP_HOST ?? "127.0.0.1";
@@ -23,7 +24,7 @@ const bridge = new BlockbenchBridge(host, port, token);
 await bridge.start();
 
 const server = new McpServer(
-  { name: "blockbench-mcp", version: "0.3.0" },
+  { name: "blockbench-mcp", version: "0.4.0" },
   {
     instructions: [
       "Use blockbench_status before editing.",
@@ -33,6 +34,8 @@ const server = new McpServer(
       "Use stable group IDs and reference those IDs from cube parents and animation tracks.",
       "Keep cube from coordinates strictly smaller than to coordinates.",
       "Use blockbench_capture_preview after major edits to visually inspect the result.",
+      "When the user attaches a reference image, inspect it with vision and call blockbench_build_from_reference with a structured blueprint. The bridge compiles primitives; it does not guess unseen image content.",
+      "For image references, map every visible major part to semantic bones and compressed primitives, use mirror_x only for truly symmetric parts, and set dry_run first for complex 120+ cube models.",
       "For pets, prefer blockbench_create_pet over assembling plain boxes manually, then use blockbench_capture_turntable and blockbench_quality_report.",
       "A polished pet needs a readable silhouette, layered face, paired limbs, articulated ears/tail, and idle/walk/skill/death animation coverage.",
       "Run blockbench_audit_model before saving or exporting.",
@@ -86,6 +89,42 @@ server.registerTool(
       return { isError: true, ...textResult({ ok: false, validationErrors: errors }) };
     }
     return textResult(await bridge.request("apply_model", spec));
+  },
+);
+
+server.registerTool(
+  "blockbench_build_from_reference",
+  {
+    description: [
+      "Build a Blockbench model from an image reference already inspected by ChatGPT/another vision-capable MCP client.",
+      "The caller must translate the attached image into the structured blueprint: palette, semantic bone hierarchy, dimensions, symmetry, compressed geometry primitives, sockets, and animation tracks.",
+      "Supports boxes, tapered stacks, alternating chains, ragged cloth, crystal clusters, skulls, rib cages, and trimmed armor plates.",
+      "Use dry_run=true first for complex references; this validates and reports compiled cube counts without changing Blockbench.",
+      "After build, always capture a four-view turntable and patch discrepancies against the original image.",
+    ].join(" "),
+    inputSchema: referenceBuildToolSchema,
+  },
+  async ({ blueprint, dry_run }) => {
+    const compiled = compileReferenceBlueprint(blueprint);
+    const validationErrors = validateModelReferences(compiled.spec);
+    if (validationErrors.length) {
+      return { isError: true, ...textResult({ ok: false, validationErrors, compile: compiled.report }) };
+    }
+    if (dry_run) {
+      return textResult({
+        ok: true,
+        dry_run: true,
+        ready_to_build: true,
+        compile: compiled.report,
+        preview: {
+          groups: compiled.spec.groups.map(group => group.name),
+          materials: compiled.spec.textures.map(texture => texture.name),
+          first_cubes: compiled.spec.cubes.slice(0, 20).map(cube => cube.name),
+        },
+      });
+    }
+    const applied = await bridge.request("apply_model", compiled.spec);
+    return textResult({ ok: true, dry_run: false, compile: compiled.report, applied });
   },
 );
 

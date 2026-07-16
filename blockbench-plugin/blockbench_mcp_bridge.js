@@ -1,7 +1,7 @@
 /* Blockbench MCP Bridge - local, structured Blockbench automation */
 (() => {
   const PLUGIN_ID = 'blockbench_mcp_bridge';
-  const PLUGIN_VERSION = '0.3.0';
+  const PLUGIN_VERSION = '0.4.0';
   const FACE_DIRECTIONS = ['north', 'south', 'east', 'west', 'up', 'down'];
   let socket = null;
   let reconnectTimer = null;
