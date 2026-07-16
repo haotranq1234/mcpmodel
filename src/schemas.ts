@@ -92,7 +92,7 @@ export const cubeSchema = z.object({
   }).optional(),
 });
 
-const pixelPatchSchema = z.object({
+export const pixelPatchSchema = z.object({
   x: z.number().int().nonnegative(),
   y: z.number().int().nonnegative(),
   width: z.number().int().positive().default(1),

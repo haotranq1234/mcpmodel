@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { animationSchema, groupSchema, locatorSchema, modelSpecSchema, type ModelSpec } from "./schemas.js";
+import { generatePixelMaterial, type PixelMaterialStyle } from "./pixel-material.js";
 
 const vec3 = z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]);
 const color = z.string().regex(/^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/);
@@ -97,6 +98,19 @@ const armorPlatePrimitive = z.object({
   rotation: vec3.default([0, 0, 0]),
 });
 
+const organicFinPrimitive = z.object({
+  kind: z.literal("organic_fin"), ...common,
+  material: refId,
+  root: vec3,
+  tip: vec3,
+  root_width: z.number().positive().max(1_000),
+  tip_width: z.number().nonnegative().max(1_000).default(0.15),
+  thickness: z.number().positive().max(1_000),
+  segments: z.number().int().min(2).max(32).default(5),
+  bend: vec3.default([0, 0, 0]).describe("Quadratic path offset used to curve fins, tails, cloth, flames, and horns"),
+  twist: z.tuple([z.number().finite(), z.number().finite()]).default([0, 0]),
+});
+
 export const referencePrimitiveSchema = z.discriminatedUnion("kind", [
   boxPrimitive,
   taperedStackPrimitive,
@@ -106,6 +120,7 @@ export const referencePrimitiveSchema = z.discriminatedUnion("kind", [
   skullPrimitive,
   ribcagePrimitive,
   armorPlatePrimitive,
+  organicFinPrimitive,
 ]);
 
 export const referenceBlueprintSchema = z.object({
@@ -125,11 +140,30 @@ export const referenceBlueprintSchema = z.object({
     box_uv: z.boolean().default(false),
     target_cube_budget: z.tuple([z.number().int().positive(), z.number().int().positive()]).default([120, 450]),
   }),
+  art_direction: z.object({
+    geometry_style: z.enum(["voxel", "fancy_voxel", "organic_layered"]).default("fancy_voxel"),
+    texture_style: z.enum(["flat", "hand_painted_pixel", "material_aware"]).default("material_aware"),
+    silhouette_priority: z.number().min(0).max(1).default(0.85),
+    paint_passes: z.array(z.enum(["base", "shadow", "highlight", "accent", "wear", "emissive"])).min(1).max(6)
+      .default(["base", "shadow", "highlight", "accent"]),
+  }).default({
+    geometry_style: "fancy_voxel",
+    texture_style: "material_aware",
+    silhouette_priority: 0.85,
+    paint_passes: ["base", "shadow", "highlight", "accent"],
+  }),
   palette: z.array(z.object({
     id: refId,
     name: z.string().min(1).max(120).optional(),
     color,
     render_mode: z.enum(["default", "emissive", "additive", "layered"]).default("default"),
+    style: z.enum(["solid", "hand_painted", "metal", "cloth", "organic", "bone", "crystal"]).default("hand_painted"),
+    accent_colors: z.array(color).max(8).default([]),
+    seed: z.number().int().min(0).max(1_000_000).default(1),
+    contrast: z.number().min(0).max(1).default(0.22),
+    noise_density: z.number().min(0).max(0.9).default(0.18),
+    edge_highlight: z.boolean().default(true),
+    tile_size: z.number().int().min(4).max(64).default(16),
   })).min(1).max(64),
   groups: z.array(groupSchema).min(1).max(2_000),
   locators: z.array(locatorSchema).max(2_000).default([]),
@@ -173,6 +207,11 @@ function mixVector(a: Vec3, b: Vec3, t: number): Vec3 {
   return vector(a.map((value, axis) => mix(value, b[axis], t)));
 }
 
+function organicPoint(root: Vec3, tip: Vec3, bend: Vec3, t: number): Vec3 {
+  const arc = Math.sin(Math.PI * t);
+  return vector(root.map((value, axis) => mix(value, tip[axis], t) + bend[axis] * arc));
+}
+
 function mirrorDraft(cube: CubeDraft): CubeDraft {
   return {
     ...cube,
@@ -203,6 +242,9 @@ export interface ReferenceCompileResult {
     within_budget: boolean;
     warnings: string[];
     primitive_breakdown: Record<string, number>;
+    painted_pixel_count: number;
+    flat_material_count: number;
+    texture_style_breakdown: Record<string, number>;
   };
 }
 
@@ -268,6 +310,22 @@ export function compileReferenceBlueprint(input: ReferenceBlueprintInput): Refer
         const size = mixVector(primitive.start_size, primitive.end_size, t).map(value => value * (1 + primitive.overlap)) as Vec3;
         const rotation = mixVector(primitive.start_rotation, primitive.end_rotation, t);
         box(`${prefix}_${index + 1}`, primitive.parent, center, size, primitive.material, rotation, primitive.mirror_x);
+      }
+    } else if (primitive.kind === "organic_fin") {
+      for (let index = 0; index < primitive.segments; index++) {
+        const t0 = index / primitive.segments;
+        const t1 = (index + 1) / primitive.segments;
+        const start = organicPoint(primitive.root, primitive.tip, primitive.bend, t0);
+        const end = organicPoint(primitive.root, primitive.tip, primitive.bend, t1);
+        const center = mixVector(start, end, 0.5);
+        const delta = end.map((value, axis) => value - start[axis]) as Vec3;
+        const length = Math.max(0.05, Math.hypot(...delta));
+        const t = (t0 + t1) / 2;
+        const width = Math.max(0.05, mix(primitive.root_width, primitive.tip_width, t));
+        const yaw = Math.atan2(delta[0], delta[2]) * 180 / Math.PI;
+        const pitch = -Math.atan2(delta[1], Math.hypot(delta[0], delta[2])) * 180 / Math.PI;
+        const roll = mix(primitive.twist[0], primitive.twist[1], t);
+        box(`${prefix}_segment_${index + 1}`, primitive.parent, center, [width, length * 1.12, primitive.thickness], primitive.material, [round(pitch), round(yaw), round(roll)], primitive.mirror_x);
       }
     } else if (primitive.kind === "chain") {
       const delta = primitive.end.map((value, axis) => value - primitive.start[axis]);
@@ -374,6 +432,37 @@ export function compileReferenceBlueprint(input: ReferenceBlueprintInput): Refer
   if (blueprint.reference.detected_views.length < 2) warnings.push("Only one reference view was detected; side/back depth will require assumptions and turntable correction.");
   if (blueprint.reference.confidence < 0.65) warnings.push("Reference analysis confidence is low; build as a draft and request more views before finalizing.");
 
+  const textureStyleBreakdown: Record<string, number> = {};
+  let paintedPixelCount = 0;
+  let flatMaterialCount = 0;
+  const compiledTextures = blueprint.palette.map((material, index) => {
+    textureStyleBreakdown[material.style] = (textureStyleBreakdown[material.style] ?? 0) + 1;
+    if (material.style === "solid") flatMaterialCount++;
+    const pixels = generatePixelMaterial({
+      baseColor: material.color,
+      width: blueprint.project.texture_width,
+      height: blueprint.project.texture_height,
+      style: material.style as PixelMaterialStyle,
+      accentColors: material.accent_colors,
+      seed: material.seed,
+      contrast: material.contrast,
+      noiseDensity: material.noise_density,
+      edgeHighlight: material.edge_highlight,
+      tileSize: material.tile_size,
+    });
+    paintedPixelCount += pixels.length;
+    return {
+      name: textureNames.get(material.id), width: blueprint.project.texture_width, height: blueprint.project.texture_height,
+      fill: material.color, pixels, render_mode: material.render_mode, use_as_default: index === 0,
+    };
+  });
+  if (blueprint.art_direction.texture_style !== "flat" && flatMaterialCount > blueprint.palette.length / 2) {
+    warnings.push("Most materials are solid even though the art direction requests painted pixels; use metal/cloth/organic/bone/crystal styles and accents.");
+  }
+  if (blueprint.art_direction.geometry_style === "organic_layered" && !blueprint.primitives.some(primitive => primitive.kind === "organic_fin")) {
+    warnings.push("Organic layered geometry was requested without organic_fin primitives; use them for fins, tails, cloth, horns, or flame silhouettes.");
+  }
+
   const spec = modelSpecSchema.parse({
     project: {
       name: blueprint.project.name,
@@ -385,10 +474,7 @@ export function compileReferenceBlueprint(input: ReferenceBlueprintInput): Refer
     mode: "replace",
     groups: blueprint.groups,
     locators: blueprint.locators,
-    textures: blueprint.palette.map((material, index) => ({
-      name: textureNames.get(material.id), width: blueprint.project.texture_width, height: blueprint.project.texture_height,
-      fill: material.color, render_mode: material.render_mode, use_as_default: index === 0,
-    })),
+    textures: compiledTextures,
     cubes,
     animations: blueprint.animations,
   });
@@ -409,6 +495,9 @@ export function compileReferenceBlueprint(input: ReferenceBlueprintInput): Refer
       within_budget: cubes.length >= minBudget && cubes.length <= maxBudget,
       warnings,
       primitive_breakdown: primitiveBreakdown,
+      painted_pixel_count: paintedPixelCount,
+      flat_material_count: flatMaterialCount,
+      texture_style_breakdown: textureStyleBreakdown,
     },
   };
 }

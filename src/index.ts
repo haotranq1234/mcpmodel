@@ -7,7 +7,7 @@ import { buildCutePet, petGeneratorSchema } from "./pet-generator.js";
 import { buildRigPreset, rigProfiles } from "./presets.js";
 import { analyzeModelQuality, type ProjectSnapshot, type QualityProfile } from "./quality.js";
 import { compileReferenceBlueprint, referenceBuildToolSchema } from "./reference-blueprint.js";
-import { animationSchema, modelSpecSchema, validateModelReferences } from "./schemas.js";
+import { animationSchema, modelSpecSchema, pixelPatchSchema, validateModelReferences } from "./schemas.js";
 
 const host = process.env.BLOCKBENCH_MCP_HOST ?? "127.0.0.1";
 const port = Number.parseInt(process.env.BLOCKBENCH_MCP_PORT ?? "32145", 10);
@@ -24,7 +24,7 @@ const bridge = new BlockbenchBridge(host, port, token);
 await bridge.start();
 
 const server = new McpServer(
-  { name: "blockbench-mcp", version: "0.4.0" },
+  { name: "blockbench-mcp", version: "0.5.0" },
   {
     instructions: [
       "Use blockbench_status before editing.",
@@ -36,6 +36,8 @@ const server = new McpServer(
       "Use blockbench_capture_preview after major edits to visually inspect the result.",
       "When the user attaches a reference image, inspect it with vision and call blockbench_build_from_reference with a structured blueprint. The bridge compiles primitives; it does not guess unseen image content.",
       "For image references, map every visible major part to semantic bones and compressed primitives, use mirror_x only for truly symmetric parts, and set dry_run first for complex 120+ cube models.",
+      "For Fancy-style references, block out the silhouette with fewer large forms, use organic_fin for curved appendages, and assign material-aware pixel styles instead of many solid-color detail cubes.",
+      "After turntable review, capture each important texture atlas and use blockbench_paint_texture for separate shadow, highlight, accent, wear, and emissive passes.",
       "For pets, prefer blockbench_create_pet over assembling plain boxes manually, then use blockbench_capture_turntable and blockbench_quality_report.",
       "A polished pet needs a readable silhouette, layered face, paired limbs, articulated ears/tail, and idle/walk/skill/death animation coverage.",
       "Run blockbench_audit_model before saving or exporting.",
@@ -154,6 +156,41 @@ server.registerTool(
     }),
   },
   async (input) => textResult(await bridge.request("patch_model", input)),
+);
+
+server.registerTool(
+  "blockbench_paint_texture",
+  {
+    description: "Paint or refine an existing Blockbench texture by stable name/UUID using exact pixel rectangles. Use after capturing the texture atlas and turntable, mirroring the hand-painted pixel pass used by professional Fancy Minecraft artists.",
+    inputSchema: z.object({
+      texture: z.string().min(1).describe("Texture name or UUID"),
+      clear: z.boolean().default(false),
+      fill: z.string().regex(/^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/).optional(),
+      pixels: z.array(pixelPatchSchema).max(100_000).default([]),
+    }),
+  },
+  async (input) => textResult(await bridge.request("paint_texture", input)),
+);
+
+server.registerTool(
+  "blockbench_capture_texture",
+  {
+    description: "Capture a texture atlas as an image with unique-color and transparency metrics so AI can inspect and repaint flat or weak areas precisely.",
+    inputSchema: z.object({ texture: z.string().min(1).describe("Texture name or UUID") }),
+  },
+  async (input) => {
+    const result = await bridge.request<{
+      data_url: string; texture: string; width: number; height: number;
+      unique_colors: number; opaque_pixels: number; transparent_pixels: number; transparency_ratio: number;
+    }>("capture_texture", input);
+    const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(result.data_url);
+    const summary = { ...result, data_url: undefined };
+    const content: Array<{ type: "text"; text: string } | { type: "image"; mimeType: string; data: string }> = [
+      { type: "text", text: JSON.stringify(summary, null, 2) },
+    ];
+    if (match) content.push({ type: "image", mimeType: match[1], data: match[2] });
+    return { content };
+  },
 );
 
 server.registerTool(

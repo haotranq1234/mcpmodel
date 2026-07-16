@@ -1,7 +1,7 @@
 /* Blockbench MCP Bridge - local, structured Blockbench automation */
 (() => {
   const PLUGIN_ID = 'blockbench_mcp_bridge';
-  const PLUGIN_VERSION = '0.4.0';
+  const PLUGIN_VERSION = '0.5.0';
   const FACE_DIRECTIONS = ['north', 'south', 'east', 'west', 'up', 'down'];
   let socket = null;
   let reconnectTimer = null;
@@ -483,6 +483,70 @@
     return { min, max, size: max.map((value, axis) => value - min[axis]) };
   }
 
+  function findTexture(reference) {
+    const texture = Texture.all.find(item => item.uuid === reference || item.name === reference);
+    if (!texture) throw new Error(`Texture '${reference}' was not found`);
+    return texture;
+  }
+
+  function getTextureStats(texture) {
+    const canvas = texture.canvas;
+    if (!canvas || !canvas.width || !canvas.height) return { unique_colors: 0, opaque_pixels: 0, transparent_pixels: 0 };
+    const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    const colors = new Set();
+    let opaque = 0;
+    let transparent = 0;
+    for (let index = 0; index < data.length; index += 4) {
+      const alpha = data[index + 3];
+      if (alpha === 0) { transparent++; continue; }
+      opaque++;
+      if (colors.size < 4096) colors.add(`${data[index]},${data[index + 1]},${data[index + 2]},${alpha}`);
+    }
+    return {
+      unique_colors: colors.size,
+      opaque_pixels: opaque,
+      transparent_pixels: transparent,
+      transparency_ratio: Number((transparent / Math.max(1, opaque + transparent)).toFixed(4)),
+    };
+  }
+
+  function paintTexture(options) {
+    if (!Project) throw new Error('No open project');
+    const texture = findTexture(options.texture);
+    const patches = options.pixels || [];
+    texture.edit(canvas => {
+      const context = canvas.getContext('2d');
+      if (options.clear) context.clearRect(0, 0, canvas.width, canvas.height);
+      if (options.fill) {
+        context.fillStyle = options.fill;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      for (const patch of patches) {
+        if (patch.x < 0 || patch.y < 0 || patch.x + patch.width > canvas.width || patch.y + patch.height > canvas.height) {
+          throw new Error(`Pixel patch at ${patch.x},${patch.y} is outside texture '${texture.name}' (${canvas.width}x${canvas.height})`);
+        }
+        context.fillStyle = patch.color;
+        context.fillRect(patch.x, patch.y, patch.width, patch.height);
+      }
+    }, { edit_name: 'MCP Paint Texture', use_cache: true });
+    texture.saved = false;
+    return { ok: true, texture: texture.name, uuid: texture.uuid, patches: patches.length, ...getTextureStats(texture) };
+  }
+
+  function captureTexture(options) {
+    if (!Project) throw new Error('No open project');
+    const texture = findTexture(options.texture);
+    return {
+      ok: true,
+      texture: texture.name,
+      uuid: texture.uuid,
+      width: texture.width,
+      height: texture.height,
+      data_url: texture.getDataURL(),
+      ...getTextureStats(texture),
+    };
+  }
+
   function getProjectState(options = {}) {
     if (!Project) return { open: false };
     return {
@@ -537,6 +601,7 @@
         uv_width: texture.uv_width,
         uv_height: texture.uv_height,
         render_mode: texture.render_mode,
+        ...getTextureStats(texture),
       })),
       animations: Animation.all.map(animation => ({
         uuid: animation.uuid,
@@ -779,6 +844,8 @@
       case 'get_project_state': return getProjectState(params);
       case 'apply_model': return await applyModel(params);
       case 'patch_model': return patchModel(params);
+      case 'paint_texture': return paintTexture(params);
+      case 'capture_texture': return captureTexture(params);
       case 'set_camera': return setCamera(params);
       case 'capture_preview': return await capturePreview(params);
       case 'save_project': return saveProject(params);

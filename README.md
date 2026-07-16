@@ -1,4 +1,4 @@
-# Blockbench MCP Bridge 0.4
+# Blockbench MCP Bridge 0.5
 
 MCP server cục bộ cho phép AI điều khiển Blockbench bằng các thao tác có cấu trúc, không chạy JavaScript tùy ý. Server dùng MCP `stdio`; plugin Blockbench kết nối đến server bằng WebSocket chỉ trên loopback.
 
@@ -9,7 +9,8 @@ MCP server cục bộ cho phép AI điều khiển Blockbench bằng các thao t
 - Nhận ảnh reference qua ChatGPT vision, biên dịch blueprint nén thành model Blockbench thay vì bắt AI liệt kê hàng trăm cube thủ công.
 - Dựng group/bone phân cấp và cube với tọa độ, pivot, rotation, inflate chính xác.
 - Box UV hoặc UV riêng cho sáu mặt; gán texture theo tên.
-- Tạo texture pixel từ màu nền và các vùng màu, hoặc dùng PNG/base64/đường dẫn cục bộ.
+- Tạo texture pixel material-aware theo phong cách hand-painted: metal, cloth, organic, bone và crystal với shadow/highlight/hue-shift/accent xác định.
+- Chụp atlas texture để AI nhìn trực tiếp rồi sơn hoặc sửa từng pixel trong project đang mở.
 - Tạo animation rotation, position và scale theo keyframe.
 - Advanced animation: Molang, pre/post data points, bezier handles và timeline markers để đồng bộ skill.
 - Rig preset chuyên nghiệp cho weapon, ModelEngine pet, quadruped pet và humanoid golem.
@@ -52,6 +53,8 @@ Mặc định bridge dùng `127.0.0.1:32145` và token `blockbench-mcp-local`, k
 - `blockbench_apply_model`: áp dụng toàn bộ model specification.
 - `blockbench_build_from_reference`: nhận blueprint do ChatGPT phân tích từ ảnh; hỗ trợ dry-run và compiler geometry cấp cao.
 - `blockbench_patch_model`: sửa cube/bone hoặc xóa cube theo tên/UUID sau khi xem turntable, có Undo nguyên tử.
+- `blockbench_capture_texture`: chụp atlas kèm số màu, pixel trong suốt và kích thước để AI kiểm tra chất lượng texture.
+- `blockbench_paint_texture`: sơn lại texture hiện có bằng pixel rectangle chính xác, có Undo trong Blockbench.
 - `blockbench_add_animation`: thêm animation nâng cao vào project hiện tại.
 - `blockbench_get_project`: đọc bone, cube, texture, animation và giới hạn model.
 - `blockbench_audit_model`: kiểm tra geometry, UV, texture, rig, loop và display transforms.
@@ -74,7 +77,8 @@ Quy trình bắt buộc:
 2. AI gửi blueprint với bone, material và primitive, lần đầu đặt `dry_run: true`.
 3. MCP bung blueprint thành cube và báo số lượng, reference lỗi và cảnh báo độ tin cậy mà không thay đổi Blockbench.
 4. Sau khi dry-run hợp lệ, AI gọi lại với `dry_run: false`.
-5. AI chụp turntable, so sánh với ảnh gốc và dùng `blockbench_patch_model` để sửa sai khác.
+5. AI chụp turntable, so sánh với ảnh gốc và dùng `blockbench_patch_model` để sửa silhouette.
+6. AI dùng `blockbench_capture_texture` → `blockbench_paint_texture` cho các lượt base/shadow/highlight/accent/wear, rồi chụp lại model.
 
 Primitive nén hiện có:
 
@@ -86,6 +90,9 @@ Primitive nén hiện có:
 - `skull`: hộp sọ nhiều lớp gồm mắt, má, hàm và răng.
 - `ribcage`: xương sườn, cột sống và lõi tùy chọn.
 - `armor_plate`: giáp nền với bốn cạnh trim.
+- `organic_fin`: đường cong nhiều phiến cho vây, đuôi, sừng, vải, tóc, lửa hoặc silhouette sinh vật hữu cơ.
+
+Schema 0.5 có `art_direction.geometry_style`, `texture_style`, `silhouette_priority` và `paint_passes`. Material có thể khai báo `style`, `accent_colors`, `contrast`, `noise_density`, `edge_highlight`, `tile_size` và seed ổn định. Cách làm này được rút ra từ luồng blockout → silhouette → pixel paint → kiểm tra cuối trong video [Luyện tay nâng cấp model #7](https://www.youtube.com/watch?v=whlhnnX4UTU) của PhongAqua/Fancy Minecraft Vietnam.
 
 Ảnh reference nhiều góc như concept sheet front/side/back cho kết quả tốt nhất. Nếu chỉ có một góc, compiler sẽ cảnh báo cần giả định chiều sâu và yêu cầu sửa qua turntable.
 
@@ -121,7 +128,7 @@ Các giới hạn an toàn:
 - `cube.from` phải nhỏ hơn `cube.to` trên cả ba trục.
 - Parent, texture và animation bone phải tồn tại.
 - Pixel patch không được vượt khỏi kích thước texture.
-- Texture pixel patch chỉ áp dụng cho texture được tạo mới; với ảnh có sẵn, gửi PNG/base64 hoàn chỉnh.
+- Texture pixel patch trong model spec áp dụng khi tạo texture mới; dùng `blockbench_paint_texture` để chỉnh atlas đang mở.
 - Plugin không cung cấp lệnh thực thi mã tùy ý.
 
 ## Phát triển và kiểm thử

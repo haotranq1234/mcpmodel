@@ -45,3 +45,21 @@ test("detects a crude unrigged pet", () => {
   assert.ok(report.next_actions.length > 0);
   assert.ok(report.findings.some(finding => finding.code === "flat_face"));
 });
+
+test("detects flat texture atlases measured by the Blockbench plugin", () => {
+  const report = analyzeModelQuality({
+    open: true,
+    groups: [{ name: "root" }],
+    cubes: Array.from({ length: 12 }, (_, index) => ({
+      name: `part_${index}`, from: [index, 0, 0], to: [index + 0.5, 2, 1], rotation: [0, 0, index % 2 ? 12 : 0],
+    })),
+    textures: [
+      { name: "flat_a.png", unique_colors: 1 },
+      { name: "flat_b.png", unique_colors: 2 },
+      { name: "painted.png", unique_colors: 9 },
+    ],
+    animations: [],
+  }, "generic");
+  assert.ok(report.findings.some(finding => finding.code === "flat_textures"));
+  assert.equal(report.metrics.flat_texture_ratio, 0.667);
+});

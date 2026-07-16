@@ -6,7 +6,10 @@ export interface ProjectSnapshot {
   bounds?: { min: number[]; max: number[]; size: number[] } | null;
   groups?: Array<{ name: string; rotation?: number[] }>;
   cubes?: Array<{ name: string; from: number[]; to: number[]; rotation?: number[]; inflate?: number }>;
-  textures?: Array<{ name: string; width?: number; height?: number; uv_width?: number; uv_height?: number }>;
+  textures?: Array<{
+    name: string; width?: number; height?: number; uv_width?: number; uv_height?: number;
+    unique_colors?: number; opaque_pixels?: number; transparent_pixels?: number; transparency_ratio?: number;
+  }>;
   animations?: Array<{ name: string; length: number; loop: string; tracks?: Array<{ name: string; keyframes: number }> }>;
 }
 
@@ -49,6 +52,12 @@ export function analyzeModelQuality(snapshot: ProjectSnapshot, profile: QualityP
   const thinRatio = cubes.length ? thinDetails / cubes.length : 0;
   const rotationRatio = cubes.length ? (rotatedCubes + rotatedGroups) / (cubes.length + groups.length) : 0;
   const uniqueCubeNames = new Set(cubeNames).size;
+  const measuredTextures = textures.filter(texture => typeof texture.unique_colors === "number");
+  const flatTextures = measuredTextures.filter(texture => (texture.unique_colors ?? 0) <= 2);
+  const flatTextureRatio = measuredTextures.length ? flatTextures.length / measuredTextures.length : null;
+  const averageTextureColors = measuredTextures.length
+    ? measuredTextures.reduce((sum, texture) => sum + (texture.unique_colors ?? 0), 0) / measuredTextures.length
+    : null;
 
   if (uniqueCubeNames < cubes.length * 0.8) {
     add("warning", "generic_names", "Nhiều cube trùng tên; đặt tên theo bộ phận giúp AI sửa model chính xác hơn.", -5);
@@ -64,6 +73,11 @@ export function analyzeModelQuality(snapshot: ProjectSnapshot, profile: QualityP
     add("suggestion", "boxy_silhouette", "Hình học gần như toàn khối vuông; thêm góc 5°, 22.5° hoặc 45° cho tai, lông, đuôi và phụ kiện.", -8);
   } else if (rotationRatio >= 0.1) {
     add("pass", "shaped_silhouette", "Model có đủ góc xoay để phá silhouette hình hộp.", 4);
+  }
+  if (flatTextureRatio !== null && flatTextureRatio > 0.5) {
+    add("warning", "flat_textures", `${flatTextures.length}/${measuredTextures.length} texture chỉ có tối đa 2 màu; phong cách Fancy cần shadow, highlight, hue-shift và accent pixel.`, -24);
+  } else if (averageTextureColors !== null && averageTextureColors >= 5) {
+    add("pass", "painted_textures", `Texture có trung bình ${averageTextureColors.toFixed(1)} màu, đủ nền tảng cho chất liệu pixel phân lớp.`, 6);
   }
 
   if (profile === "pet") {
@@ -129,13 +143,15 @@ export function analyzeModelQuality(snapshot: ProjectSnapshot, profile: QualityP
   return {
     ok: !findings.some(finding => finding.severity === "error"),
     profile,
-    assessment: "structural",
+    assessment: measuredTextures.length ? "structural_and_texture" : "structural",
     visual_review_required: true,
     score,
     grade,
     metrics: {
       cubes: cubes.length, groups: groups.length, textures: textures.length, animations: animations.length,
-      thin_detail_ratio: Number(thinRatio.toFixed(3)), rotation_ratio: Number(rotationRatio.toFixed(3)), bounds,
+      thin_detail_ratio: Number(thinRatio.toFixed(3)), rotation_ratio: Number(rotationRatio.toFixed(3)),
+      flat_texture_ratio: flatTextureRatio === null ? null : Number(flatTextureRatio.toFixed(3)),
+      average_texture_colors: averageTextureColors === null ? null : Number(averageTextureColors.toFixed(2)), bounds,
     },
     findings,
     next_actions: findings

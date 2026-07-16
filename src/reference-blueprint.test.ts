@@ -65,9 +65,23 @@ test("compiles every image-reference primitive into a valid model spec", () => {
   assert.ok(result.report.cube_count >= 40);
   assert.equal(result.report.primitive_count, 8);
   assert.equal(result.report.warnings.length, 0);
+  assert.ok(result.report.painted_pixel_count > 0);
+  assert.equal(result.report.flat_material_count, 0);
   for (const kind of ["box", "tapered_stack", "chain", "ragged_panel", "crystal_cluster", "skull", "ribcage", "armor_plate"]) {
     assert.equal(result.report.primitive_breakdown[kind], 1, kind);
   }
+});
+
+test("compiles curved organic fins for Fancy-style silhouettes", () => {
+  const input = blueprint();
+  input.primitives.push({
+    kind: "organic_fin", id: "tail_fin", name: "curved_tail_fin", parent: "body", material: "stone",
+    root: [0, 18, 2], tip: [0, 16, 12], root_width: 6, tip_width: 0.4, thickness: 0.35,
+    segments: 5, bend: [2, 3, 0], twist: [-8, 22], mirror_x: false,
+  });
+  const result = compileReferenceBlueprint(input);
+  assert.equal(result.report.primitive_breakdown.organic_fin, 1);
+  assert.equal(result.spec.cubes.filter(cube => cube.name.startsWith("tail_fin_segment_")).length, 5);
 });
 
 test("mirrors exact geometry across X without duplicating centered parts", () => {
